@@ -5,7 +5,7 @@ public class Node: Codable {
     class var cmark_node_type: cmark_node_type { return CMARK_NODE_NONE }
 
     /// A pointer to the underlying `cmark_node` for the node.
-    final let cmark_node: OpaquePointer
+    final let cmark_node: UnsafeMutablePointer<cmark_node>
 
     /// Whether the underlying `cmark_node` should be freed upon deallocation.
     var managed: Bool = false
@@ -15,7 +15,7 @@ public class Node: Codable {
 
      - Parameter cmark_node: A `cmark_node` pointer.
      */
-    required init(_ cmark_node: OpaquePointer) {
+    required init(_ cmark_node: UnsafeMutablePointer<cmark_node>) {
         self.cmark_node = cmark_node
         assert(type(of: self) != Node.self)
         assert(cmark_node_get_type(cmark_node) == type(of: self).cmark_node_type)
@@ -42,7 +42,7 @@ public class Node: Codable {
      - Parameter cmark_node: A `cmark_node` pointer.
      - Returns: An instance of a `Node` subclass.
      */
-    static func create(for cmark_node: OpaquePointer!) -> Node? {
+    static func create(for cmark_node: UnsafeMutablePointer<cmark_node>!) -> Node? {
         guard let cmark_node = cmark_node else { return nil }
 
         switch cmark_node_get_type(cmark_node) {
@@ -215,7 +215,7 @@ public class Node: Codable {
         }
 
         defer {
-            free(cString)
+            cString.deallocate()
         }
 
         return String(cString: cString)
@@ -230,7 +230,7 @@ public class Node: Codable {
         let document = try Document(commonmark, options: [])
         let node: Node
 
-        switch Self.cmark_node_type {
+        switch Node.cmark_node_type {
         case CMARK_NODE_DOCUMENT:
             node = document
         case CMARK_NODE_BLOCK_QUOTE,
@@ -242,7 +242,7 @@ public class Node: Codable {
              CMARK_NODE_PARAGRAPH,
              CMARK_NODE_HEADING,
              CMARK_NODE_THEMATIC_BREAK:
-            node = try Self.extractRootBlock(from: document, in: container)
+            node = try Node.extractRootBlock(from: document, in: container)
         case CMARK_NODE_TEXT,
              CMARK_NODE_SOFTBREAK,
              CMARK_NODE_LINEBREAK,
@@ -253,7 +253,7 @@ public class Node: Codable {
              CMARK_NODE_STRONG,
              CMARK_NODE_LINK,
              CMARK_NODE_IMAGE:
-            node = try Self.extractRootInline(from: document, in: container)
+            node = try Node.extractRootInline(from: document, in: container)
         default:
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "unsupported node type")
         }
@@ -279,10 +279,10 @@ public class Node: Codable {
         try container.encode(description)
     }
 
-    private static func extractRootBlock(from document: Document, in container: SingleValueDecodingContainer) throws -> Self {
+    private static func extractRootBlock(from document: Document, in container: SingleValueDecodingContainer) throws -> Node {
         // Unlink the children from the document node to prevent dangling pointers to the parent.
         let documentChildren = document.removeChildren()
-        guard let block = documentChildren.first as? Self,
+        guard let block = documentChildren.first,
             documentChildren.count == 1
         else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "expected single block node")
@@ -292,7 +292,7 @@ public class Node: Codable {
         return block
     }
 
-    private static func extractRootInline(from document: Document, in container: SingleValueDecodingContainer) throws -> Self {
+    private static func extractRootInline(from document: Document, in container: SingleValueDecodingContainer) throws -> Node {
         // Unlink the children from the document node to prevent dangling pointers to the parent.
         let documentChildren = document.removeChildren()
         guard let paragraph = documentChildren.first as? Paragraph,
@@ -303,7 +303,7 @@ public class Node: Codable {
 
         // Unlink the children from the root node to prevent dangling pointers to the parent.
         let paragraphChildren = paragraph.removeChildren()
-        guard let inline = paragraphChildren.first as? Self,
+        guard let inline = paragraphChildren.first,
             paragraphChildren.count == 1
         else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "expected single inline node")
